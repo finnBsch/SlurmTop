@@ -1,16 +1,5 @@
 # SlurmTop
 
-A terminal-based monitoring tool for SLURM job queues with an interactive interface.
-
-## Features
-
-- **Multiple Views**: Overview, Running Jobs, Pending Jobs, and All Jobs
-- **Interactive Column Focus**: Use arrow keys to focus on specific columns and see full content
-- **Priority Tracking**: For pending jobs, see your position in the queue
-- **GPU Monitoring**: Track GPU allocations and requests by type
-- **Real-time Updates**: Refresh data on demand
-- **Scrollable Interface**: Navigate through large job lists
-
 ## Installation
 
 ### Requirements
