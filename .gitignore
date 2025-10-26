@@ -1,0 +1,17 @@
+# Compiled binary
+slurmtop
+
+# Object files
+*.o
+
+# Core dumps
+core
+core.*
+
+# Editor backups
+*~
+*.swp
+*.swo
+
+# Build artifacts
+*.out
