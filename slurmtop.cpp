@@ -477,7 +477,7 @@ public:
         // Controls bar
         attron(COLOR_PAIR(1));
         mvhline(1, 0, ' ', cols);
-        mvprintw(1, 2, "Controls: \u2191/\u2193:Scroll  \u2190/\u2192:Focus Column  PgUp/PgDn:Page  R:Refresh  Q:Quit");
+        mvprintw(1, 2, "Controls: Up/Down:Scroll  Left/Right:Focus Column  PgUp/PgDn:Page  R:Refresh  Q:Quit");
         attroff(COLOR_PAIR(1));
     }
 
@@ -906,7 +906,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Usage: " << argv[0] << " <username>" << std::endl;
         std::cerr << "\nControls:" << std::endl;
         std::cerr << "  1-4: Switch views (Overview/Running/Pending/All)" << std::endl;
-        std::cerr << "  \u2191/\u2193: Scroll up/down" << std::endl;
+        std::cerr << "  Up/Down: Scroll up/down" << std::endl;
+        std::cerr << "  Left/Right: Focus column" << std::endl;
         std::cerr << "  PgUp/PgDn: Scroll by page" << std::endl;
         std::cerr << "  R: Refresh" << std::endl;
         std::cerr << "  Q: Quit" << std::endl;
