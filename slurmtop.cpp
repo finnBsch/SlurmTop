@@ -103,13 +103,17 @@ void extractGPUInfo(const std::string& output, const std::string& fieldName, int
     gpuCount = 0;
     gpuType = "N/A";
 
-    // Find the field (AllocTRES= or ReqTRES=)
-    size_t fieldPos = output.find(fieldName + "=");
-    if (fieldPos == std::string::npos) return;
+    // Find the field (AllocTRES= or ReqTRES=) if fieldName is provided
+    // If fieldName is empty, we're parsing a TRES string directly
+    size_t searchStart = 0;
+    if (!fieldName.empty()) {
+        size_t fieldPos = output.find(fieldName + "=");
+        if (fieldPos == std::string::npos) return;
+        searchStart = fieldPos;
+    }
 
     // FIRST: Try to find typed GPU pattern (gres/gpu:TYPE=COUNT)
     // This is more specific and should be checked first
-    size_t searchStart = fieldPos;
     size_t typedGresPos = output.find("gres/gpu:", searchStart);
 
     if (typedGresPos != std::string::npos) {
@@ -155,7 +159,51 @@ void extractGPUInfo(const std::string& output, const std::string& fieldName, int
     }
 }
 
-// Parse job details from scontrol output
+// Parse job from squeue pipe-delimited line
+// Format: JobID|JobName|Account|State|Reason|TimeUsed|TimeLimit|Priority|TresAlloc|
+Job parseJobFromSqueue(const std::string& line) {
+    Job job;
+    std::istringstream ss(line);
+    std::string token;
+    int fieldIndex = 0;
+
+    while (std::getline(ss, token, '|')) {
+        // Strip any leading/trailing whitespace
+        size_t start = token.find_first_not_of(" \t\r\n");
+        size_t end = token.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos) {
+            token = token.substr(start, end - start + 1);
+        } else {
+            token = "";
+        }
+
+        switch (fieldIndex) {
+            case 0: job.jobId = stripControlChars(token); break;
+            case 1: job.jobName = stripControlChars(token); break;
+            case 2: job.account = stripControlChars(token); break;
+            case 3: job.state = stripControlChars(token); break;
+            case 4: job.reason = stripControlChars(token); break;
+            case 5: job.runtime = stripControlChars(token); break;
+            case 6: job.timeLimit = stripControlChars(token); break;
+            case 7:
+                try {
+                    job.priority = std::stol(token);
+                } catch (...) {
+                    job.priority = 0;
+                }
+                break;
+            case 8:
+                // Parse TRES allocation (format: cpu=4,mem=16G,gres/gpu:a100=2)
+                extractGPUInfo(token, "", job.gpuCount, job.gpuType);
+                break;
+        }
+        fieldIndex++;
+    }
+
+    return job;
+}
+
+// Parse job details from scontrol output (kept for backwards compatibility if needed)
 Job parseJobDetails(const std::string& jobId, const std::string& scontrolOutput) {
     Job job;
     job.jobId = jobId;
@@ -222,40 +270,29 @@ std::vector<Job> parseMultipleJobsFromScontrol(const std::string& output) {
 void fetchSlurmData(SlurmData& data) {
     data.clear();
 
-    // Get all job IDs for the user
-    std::string cmd = "squeue -u " + data.username + " -h -o \"%i\"";
-    std::string jobIdsOutput = execCommand(cmd);
+    // Fetch ALL user's jobs in ONE squeue call with comprehensive format string
+    // Using pipe delimiter for easy parsing: JobID|Name|Account|State|Reason|TimeUsed|TimeLimit|Priority|TresAlloc|
+    std::string squeueCmd = "squeue -u " + data.username + " -h --Format='JobID:|,Name:|,Account:|,State:|,Reason:|,TimeUsed:|,TimeLimit:|,PriorityLong:|,tres-alloc:|' 2>/dev/null";
+    std::string squeueOutput = execCommand(squeueCmd);
 
-    std::istringstream iss(jobIdsOutput);
-    std::string jobId;
-    std::vector<std::string> jobIds;
+    // Parse each line as a job
+    std::istringstream iss(squeueOutput);
+    std::string line;
+    while (std::getline(iss, line)) {
+        if (line.empty()) continue;
 
-    while (iss >> jobId) {
-        jobIds.push_back(jobId);
-    }
+        Job job = parseJobFromSqueue(line);
+        data.jobs.push_back(job);
 
-    if (!jobIds.empty()) {
-        // Fetch user's jobs by calling scontrol for each job ID individually
-        // (comma-separated IDs don't always work reliably)
-        for (const auto& jid : jobIds) {
-            std::string scontrolCmd = "scontrol show job " + jid + " 2>/dev/null";
-            std::string output = execCommand(scontrolCmd);
-
-            if (!output.empty()) {
-                Job job = parseJobDetails(jid, output);
-                data.jobs.push_back(job);
-
-                if (job.state == "RUNNING") {
-                    data.runningJobs++;
-                    if (job.gpuCount > 0) {
-                        data.gpuTypeCount[job.gpuType] += job.gpuCount;
-                    }
-                } else if (job.state == "PENDING") {
-                    data.pendingJobs++;
-                    if (job.gpuCount > 0) {
-                        data.gpuTypeRequested[job.gpuType] += job.gpuCount;
-                    }
-                }
+        if (job.state == "RUNNING") {
+            data.runningJobs++;
+            if (job.gpuCount > 0) {
+                data.gpuTypeCount[job.gpuType] += job.gpuCount;
+            }
+        } else if (job.state == "PENDING") {
+            data.pendingJobs++;
+            if (job.gpuCount > 0) {
+                data.gpuTypeRequested[job.gpuType] += job.gpuCount;
             }
         }
     }
@@ -268,9 +305,9 @@ void fetchSlurmData(SlurmData& data) {
     std::string allPendingOutput = execCommand(allPendingCmd);
 
     std::istringstream pendingIss(allPendingOutput);
-    std::string line;
-    while (std::getline(pendingIss, line)) {
-        std::istringstream lineStream(line);
+    std::string pendingLine;
+    while (std::getline(pendingIss, pendingLine)) {
+        std::istringstream lineStream(pendingLine);
         std::string jid;
         long priority;
 
