@@ -187,6 +187,37 @@ Job parseJobDetails(const std::string& jobId, const std::string& scontrolOutput)
     return job;
 }
 
+// Parse multiple jobs from single scontrol output (separated by blank lines)
+std::vector<Job> parseMultipleJobsFromScontrol(const std::string& output) {
+    std::vector<Job> jobs;
+    std::istringstream stream(output);
+    std::string line;
+    std::string currentJobBlock;
+    std::string currentJobId;
+
+    while (std::getline(stream, line)) {
+        // Check if this is the start of a new job entry
+        if (line.find("JobId=") == 0) {
+            // Save previous job if exists
+            if (!currentJobBlock.empty() && !currentJobId.empty()) {
+                jobs.push_back(parseJobDetails(currentJobId, currentJobBlock));
+            }
+            // Start new job
+            currentJobId = extractField(line, "JobId");
+            currentJobBlock = line + "\n";
+        } else if (!line.empty()) {
+            currentJobBlock += line + "\n";
+        }
+    }
+
+    // Don't forget the last job
+    if (!currentJobBlock.empty() && !currentJobId.empty()) {
+        jobs.push_back(parseJobDetails(currentJobId, currentJobBlock));
+    }
+
+    return jobs;
+}
+
 // Fetch all SLURM data
 void fetchSlurmData(SlurmData& data) {
     data.clear();
@@ -203,24 +234,27 @@ void fetchSlurmData(SlurmData& data) {
         jobIds.push_back(jobId);
     }
 
-    // Fetch details for each job
-    for (const auto& jid : jobIds) {
-        std::string scontrolCmd = "scontrol show job " + jid + " 2>/dev/null";
-        std::string output = execCommand(scontrolCmd);
+    if (!jobIds.empty()) {
+        // Fetch user's jobs by calling scontrol for each job ID individually
+        // (comma-separated IDs don't always work reliably)
+        for (const auto& jid : jobIds) {
+            std::string scontrolCmd = "scontrol show job " + jid + " 2>/dev/null";
+            std::string output = execCommand(scontrolCmd);
 
-        if (!output.empty()) {
-            Job job = parseJobDetails(jid, output);
-            data.jobs.push_back(job);
+            if (!output.empty()) {
+                Job job = parseJobDetails(jid, output);
+                data.jobs.push_back(job);
 
-            if (job.state == "RUNNING") {
-                data.runningJobs++;
-                if (job.gpuCount > 0) {
-                    data.gpuTypeCount[job.gpuType] += job.gpuCount;
-                }
-            } else if (job.state == "PENDING") {
-                data.pendingJobs++;
-                if (job.gpuCount > 0) {
-                    data.gpuTypeRequested[job.gpuType] += job.gpuCount;
+                if (job.state == "RUNNING") {
+                    data.runningJobs++;
+                    if (job.gpuCount > 0) {
+                        data.gpuTypeCount[job.gpuType] += job.gpuCount;
+                    }
+                } else if (job.state == "PENDING") {
+                    data.pendingJobs++;
+                    if (job.gpuCount > 0) {
+                        data.gpuTypeRequested[job.gpuType] += job.gpuCount;
+                    }
                 }
             }
         }
@@ -228,20 +262,23 @@ void fetchSlurmData(SlurmData& data) {
 
     data.totalJobs = data.jobs.size();
 
-    // Fetch all pending jobs for priority comparison
-    std::string allPendingCmd = "squeue -h -t PD -o \"%i\"";
+    // Fetch all pending job priorities using squeue format (NO scontrol needed!)
+    // Format: "jobid priority" - much faster than calling scontrol for each job
+    std::string allPendingCmd = "squeue -h -t PD -o \"%i %Q\" 2>/dev/null";
     std::string allPendingOutput = execCommand(allPendingCmd);
 
     std::istringstream pendingIss(allPendingOutput);
-    while (pendingIss >> jobId) {
-        std::string scontrolCmd = "scontrol show job " + jobId + " 2>/dev/null";
-        std::string output = execCommand(scontrolCmd);
+    std::string line;
+    while (std::getline(pendingIss, line)) {
+        std::istringstream lineStream(line);
+        std::string jid;
+        long priority;
 
-        if (!output.empty()) {
-            Job job = parseJobDetails(jobId, output);
-            if (job.priority > 0) {
-                data.allPendingJobs.push_back(job);
-            }
+        if (lineStream >> jid >> priority && priority > 0) {
+            Job job;
+            job.jobId = jid;
+            job.priority = priority;
+            data.allPendingJobs.push_back(job);
         }
     }
 
