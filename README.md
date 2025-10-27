@@ -16,3 +16,7 @@ make
 ```bash
 ./slurmtop <username>
 ```
+
+## Todo
+- add auto-update
+- speedup initial loading
